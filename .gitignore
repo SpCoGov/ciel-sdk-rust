@@ -1,0 +1,9 @@
+/target/
+/identity/
+*-grant.json
+
+**/identity.json
+**/candidate-*.json
+**/pending-*.tmp
+**/agent.lock
+grant.json
