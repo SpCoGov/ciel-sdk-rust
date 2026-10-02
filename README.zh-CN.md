@@ -1,8 +1,8 @@
-[English](README.md)
+[English](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/README.md)
 
 <h1 align="center">
   <br>
-  <a href="https://github.com/SpCoGov/ciel-sdk-rust"><img src="assets/logo.svg" alt="CIEL logo" width="150"></a>
+  <a href="https://github.com/SpCoGov/ciel-sdk-rust"><img src="https://raw.githubusercontent.com/SpCoGov/ciel-sdk-rust/main/assets/logo.svg" alt="CIEL logo" width="150"></a>
   <br>
   CIEL Rust SDK
   <br>
@@ -12,25 +12,21 @@
 
 <p align="center">
   <a href="https://github.com/SpCoGov/ciel-sdk-rust">仓库</a> •
-  <a href="docs/usage.zh-CN.md">文档</a> •
-  <a href="examples/client.rs">示例</a> •
+  <a href="https://github.com/SpCoGov/ciel-sdk-rust/blob/main/docs/usage.zh-CN.md">文档</a> •
+  <a href="https://github.com/SpCoGov/ciel-sdk-rust/blob/main/examples/client.rs">示例</a> •
   <a href="https://github.com/SpCoGov/ciel-sdk-rust/issues">问题反馈</a> •
   <a href="https://github.com/SpCoGov/ciel-sdk-java">Java SDK</a>
 </p>
 
 ## 🛠️ 快速开始
 
-需要 **Rust 1.89+** 和 Tokio runtime。crate 名称为 `ciel-sdk`，导入名为 `ciel_sdk`，目前尚未发布到 crates.io。
+需要 **Rust 1.89+** 和 Tokio runtime。crate 名称为 `ciel-sdk`，导入名为 `ciel_sdk`。
 
-```sh
-git clone https://github.com/SpCoGov/ciel-sdk-rust
-```
-
-在应用的 `Cargo.toml` 中添加本地依赖，按实际仓库位置调整路径：
+在应用的 `Cargo.toml` 中添加 SDK 和 Tokio：
 
 ```toml
 [dependencies]
-ciel-sdk = { path = "../ciel-sdk-rust" }
+ciel-sdk = "0.1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -50,11 +46,12 @@ async fn main() -> Result<()> {
 }
 ```
 
-以后启动时直接使用已有身份目录连接，不再重复注册。请私密保存授权和身份文件。事件、命令、通知及恢复规则见[使用指南](docs/usage.zh-CN.md)。
+以后启动时直接使用已有身份目录连接，不再重复注册。请私密保存授权和身份文件。事件、命令、通知及恢复规则见[使用指南](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/docs/usage.zh-CN.md)。
 
 ## ⚙️ 构建
 
 ```sh
+git clone https://github.com/SpCoGov/ciel-sdk-rust
 cd ciel-sdk-rust
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
@@ -62,7 +59,7 @@ cargo test
 cargo doc --no-deps --open
 ```
 
-API 文档输出到 `target/doc/ciel_sdk/index.html`。可运行示例和隔离 CIEL 验收测试见[构建和测试说明](docs/usage.zh-CN.md#示例与验证)。发布前使用 `cargo package --allow-dirty` 检查包，步骤见[发布说明](docs/usage.zh-CN.md#发布)。
+API 文档输出到 `target/doc/ciel_sdk/index.html`。可运行示例和隔离 CIEL 验收测试见[构建和测试说明](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/docs/usage.zh-CN.md#示例与验证)。发布前使用 `cargo publish --locked --dry-run` 检查包，步骤见[发布说明](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/docs/usage.zh-CN.md#发布)。
 
 ## 🚀 贡献
 
@@ -74,4 +71,4 @@ Tokio + tokio-tungstenite + Serde + rustls。使用 ring、sha2、x509-parser �
 
 ## 📜 许可证
 
-[Apache License 2.0](LICENSE)。
+[Apache License 2.0](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/LICENSE)。

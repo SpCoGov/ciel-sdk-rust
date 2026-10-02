@@ -2,16 +2,18 @@
 
 [English](usage.md) · [返回 README](../README.zh-CN.md)
 
-## 本地接入
+## 依赖
 
-目前尚未发布到 crates.io。在应用的 Cargo.toml 中添加：
+在应用的 Cargo.toml 中添加 SDK 和应用依赖：
 
 ```toml
 [dependencies]
-ciel-sdk = { path = "D:/ciel-sdk-rust" }
+ciel-sdk = "0.1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"
 ```
+
+本地开发时可以改用 `ciel-sdk = { path = "D:/ciel-sdk-rust" }`。
 
 ## 首次注册
 
@@ -120,11 +122,15 @@ cargo test --test acceptance -- --nocapture
 
 ## 发布
 
-仓库：[SpCoGov/ciel-sdk-rust](https://github.com/SpCoGov/ciel-sdk-rust)。使用自己的 crates.io 账户发布：
+仓库：[SpCoGov/ciel-sdk-rust](https://github.com/SpCoGov/ciel-sdk-rust)。[Publish to crates.io 工作流](https://github.com/SpCoGov/ciel-sdk-rust/actions/workflows/publish.yml) 会先运行测试、构建 API 文档并验证发布包，再上传到 crates.io。
+
+将 crates.io API Token 保存为仓库级 Secret `CARGO_REGISTRY_TOKEN`；首次发布需要允许发布新 crate。打开 **Actions → Publish to crates.io → Run workflow**：保留 `dry_run` 勾选只做检查，取消勾选则发布 `Cargo.toml` 中的版本。本机无需配置 Token 或 GPG。
+
+在本机发布时，先运行 `cargo login`，然后执行：
 
 ```sh
-cargo package --allow-dirty
-cargo publish
+cargo publish --locked --dry-run
+cargo publish --locked
 ```
 
-发布前确认包名可用、版本正确，并检查打包内容。Cargo 不需要 GPG；本项目尚未发布到 crates.io。
+发布前检查包名、版本和打包内容。已发布版本不能覆盖，后续发布需要增加 `version`。Cargo 不需要 GPG。

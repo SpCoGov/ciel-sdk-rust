@@ -1,8 +1,8 @@
-[简体中文](README.zh-CN.md)
+[简体中文](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/README.zh-CN.md)
 
 <h1 align="center">
   <br>
-  <a href="https://github.com/SpCoGov/ciel-sdk-rust"><img src="assets/logo.svg" alt="CIEL logo" width="150"></a>
+  <a href="https://github.com/SpCoGov/ciel-sdk-rust"><img src="https://raw.githubusercontent.com/SpCoGov/ciel-sdk-rust/main/assets/logo.svg" alt="CIEL logo" width="150"></a>
   <br>
   CIEL Rust SDK
   <br>
@@ -12,25 +12,21 @@
 
 <p align="center">
   <a href="https://github.com/SpCoGov/ciel-sdk-rust">Repository</a> •
-  <a href="docs/usage.md">Documentation</a> •
-  <a href="examples/client.rs">Example</a> •
+  <a href="https://github.com/SpCoGov/ciel-sdk-rust/blob/main/docs/usage.md">Documentation</a> •
+  <a href="https://github.com/SpCoGov/ciel-sdk-rust/blob/main/examples/client.rs">Example</a> •
   <a href="https://github.com/SpCoGov/ciel-sdk-rust/issues">Issues</a> •
   <a href="https://github.com/SpCoGov/ciel-sdk-java">Java SDK</a>
 </p>
 
 ## 🛠️ Getting started
 
-Requires **Rust 1.89+** and a Tokio runtime. The crate is named `ciel-sdk` and imported as `ciel_sdk`; it has not yet been published to crates.io.
+Requires **Rust 1.89+** and a Tokio runtime. The crate is named `ciel-sdk` and imported as `ciel_sdk`.
 
-```sh
-git clone https://github.com/SpCoGov/ciel-sdk-rust
-```
-
-Add a local dependency to your application's `Cargo.toml`, adjusting the path to your checkout:
+Add the SDK and Tokio to your application's `Cargo.toml`:
 
 ```toml
 [dependencies]
-ciel-sdk = { path = "../ciel-sdk-rust" }
+ciel-sdk = "0.1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -50,11 +46,12 @@ async fn main() -> Result<()> {
 }
 ```
 
-On subsequent starts, connect using the existing directory. Keep grants and identity files private. For events, commands, notifications, and recovery rules, see the [usage guide](docs/usage.md).
+On subsequent starts, connect using the existing directory. Keep grants and identity files private. For events, commands, notifications, and recovery rules, see the [usage guide](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/docs/usage.md).
 
 ## ⚙️ Build
 
 ```sh
+git clone https://github.com/SpCoGov/ciel-sdk-rust
 cd ciel-sdk-rust
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
@@ -62,7 +59,7 @@ cargo test
 cargo doc --no-deps --open
 ```
 
-API documentation is generated in `target/doc/ciel_sdk/index.html`. The [build and test guide](docs/usage.md#examples-and-validation) covers runnable examples and isolated CIEL acceptance tests. Before a release, validate the package with `cargo package --allow-dirty`; see the [publishing instructions](docs/usage.md#publishing).
+API documentation is generated in `target/doc/ciel_sdk/index.html`. The [build and test guide](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/docs/usage.md#examples-and-validation) covers runnable examples and isolated CIEL acceptance tests. Before a release, validate the package with `cargo publish --locked --dry-run`; see the [publishing instructions](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/docs/usage.md#publishing).
 
 ## 🚀 Contributing
 
@@ -74,4 +71,4 @@ Tokio + tokio-tungstenite + Serde + rustls. The SDK uses ring, sha2 and x509-par
 
 ## 📜 License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/LICENSE).

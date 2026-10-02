@@ -2,16 +2,18 @@
 
 [简体中文](usage.zh-CN.md) · [Back to README](../README.md)
 
-## Local dependency
+## Dependency
 
-This crate has not been published to crates.io:
+Add the SDK and application dependencies:
 
 ```toml
 [dependencies]
-ciel-sdk = { path = "D:/ciel-sdk-rust" }
+ciel-sdk = "0.1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"
 ```
+
+For local development, use `ciel-sdk = { path = "D:/ciel-sdk-rust" }` instead.
 
 ## Enrollment
 
@@ -120,11 +122,15 @@ This starts a separate CIEL process with a temporary database, TLS identity, use
 
 ## Publishing
 
-Repository: [SpCoGov/ciel-sdk-rust](https://github.com/SpCoGov/ciel-sdk-rust). Publish using your own crates.io account:
+Repository: [SpCoGov/ciel-sdk-rust](https://github.com/SpCoGov/ciel-sdk-rust). The [Publish to crates.io workflow](https://github.com/SpCoGov/ciel-sdk-rust/actions/workflows/publish.yml) runs tests, builds API documentation and verifies the package before uploading.
+
+Add a crates.io API token as the repository secret `CARGO_REGISTRY_TOKEN`. The first release needs permission to publish a new crate. Open **Actions → Publish to crates.io → Run workflow**: leave `dry_run` enabled to check the package, or disable it to publish the version in `Cargo.toml`. No local token or GPG configuration is needed.
+
+For a local release, run `cargo login`, then:
 
 ```sh
-cargo package --allow-dirty
-cargo publish
+cargo publish --locked --dry-run
+cargo publish --locked
 ```
 
-Before publishing, verify that the crate name is available, check the version and inspect the package contents. Cargo does not require GPG. This project has not been published to crates.io.
+Check the crate name, version and packaged files before publishing. Published versions cannot be overwritten; increase `version` for the next release. Cargo does not require GPG.
