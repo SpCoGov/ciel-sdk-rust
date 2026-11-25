@@ -47,5 +47,5 @@ mod readme_en {}
 mod readme_zh {}
 pub use types::{
     CommandCall, CommandExecution, CommandStatus, Delivery, DeliveryStatus, Event, Message,
-    Notification, Publication,
+    Notification, NotifierDelivery, Publication,
 };

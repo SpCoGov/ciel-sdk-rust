@@ -50,6 +50,45 @@ async fn main() -> Result<()> {
             }
             client.close().await;
         }
+        Some("notifier") if args.len() == 4 => {
+            let client = Client::connect(&args[2]).await?;
+            let mut messages = client.messages();
+            let notifier_id = &args[3];
+            client
+                .register_notifier(
+                    notifier_id,
+                    "Example Notifier",
+                    "External notifier provider example",
+                    Some("Target ID"),
+                )
+                .await?;
+            println!(
+                "READY {} notifier={}",
+                client.identity().instance_id,
+                notifier_id
+            );
+            loop {
+                let message = tokio::select! { _=tokio::signal::ctrl_c()=>break, message=messages.recv()=>message };
+                match message {
+                    Ok(Message::NotifierDeliver(delivery)) => {
+                        println!(
+                            "DELIVER delivery_id={} notifier_id={} type={}",
+                            delivery.delivery_id, delivery.notifier_id, delivery.notification_type
+                        );
+                        if let Err(error) = client.respond_notifier(&delivery, true, None).await {
+                            eprintln!("{error}");
+                        }
+                    }
+                    Ok(Message::Error(error)) => eprintln!("{error}"),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        eprintln!("Missed {n} messages")
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    _ => {}
+                }
+            }
+            client.close().await;
+        }
         Some("call") if args.len() == 4 => {
             let client = Client::connect(&args[2]).await?;
             // Persist this request ID in your application before submitting a real business call.
@@ -66,7 +105,7 @@ async fn main() -> Result<()> {
             client.close().await;
         }
         _ => eprintln!(
-            "Usage: cargo run --example client -- enroll <grant.json> <identity-dir> | publish <identity-dir> | serve <identity-dir> | call <identity-dir> <target-instance-id>"
+            "Usage: cargo run --example client -- enroll <grant.json> <identity-dir> | publish <identity-dir> | serve <identity-dir> | notifier <identity-dir> <notifier-id> | call <identity-dir> <target-instance-id>"
         ),
     }
     Ok(())

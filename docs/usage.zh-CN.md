@@ -8,7 +8,7 @@
 
 ```toml
 [dependencies]
-ciel-sdk = "0.1.0"
+ciel-sdk = "0.2.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"
 ```
@@ -68,7 +68,9 @@ async fn main() -> Result<()> {
 
 调用方需要管理员对目标实例对应命令的授权，注册不会授予调用权限。使用 `invoke_command(target_instance_id, command_id, input, timeout_seconds, request_id)`，再用 `get_command` 或 `await_command` 获取终态。接受响应可能已经结束；`Pending`/`Dispatched` 表示未结束，`Succeeded`/`Failed`/`Unknown` 为终态。**Unknown 表示副作用不确定，不能盲目重新执行。** 完成推送只向原调用连接尽力投递，丢失后可查询恢复；客户端等待超时不会取消服务端执行。提交真实业务前持久保存请求 ID、目标、命令、输入和超时，人工决定重试时必须全部保持相同。冲突和记录保留/过期等错误直接返回。
 
-通知用 `register_notification` 注册、`send_notification` 发送纯文本、`get_notification` 查询。用户在 CIEL 设置接收渠道，注册类型不会自动订阅用户。相同请求 ID 与类型/标题/正文去重，改变参数返回 `REQUEST_ID_CONFLICT`。`Notification.deliveries` 按渠道分组，`Pending`/`Sending` 需要继续查询，没有通知完成推送。邮件 `Delivered` 只表示 SMTP 接受，不保证收到或已读。
+通知用 `register_notification` 注册、`send_notification` 发送纯文本、`get_notification` 查询。用户在 CIEL 设置接收渠道，注册类型不会自动订阅用户。相同请求 ID 与类型/标题/正文去重，改变参数返回 `REQUEST_ID_CONFLICT`。`Notification.deliveries` 按渠道分组，`Pending`/`Sending` 需要继续查询，没有通知完成推送。邮件或外部通知器 `Delivered` 只表示渠道已接受，不保证用户已收到或已读。
+
+外部通知器提供方可通过 `register_notifier(notifier_id, name, description, target_label)` 为单个实例注册一个或多个外部通知渠道（单实例最多 32 个，`inbox` 与 `email` 为保留 ID），通过 `unregister_notifier(notifier_id)` 注销。新注册的外部渠道默认停用（`enabled = false`），需由管理员显式启用后才会派发真实用户通知；重复注册仅更新展示元数据，不会重置启停状态或清除用户目标与偏好。通过 `messages()` 消费 `Message::NotifierDeliver(delivery)`，并用 `respond_notifier(&delivery, success, error_code)` 在原连接回传结果。`success` 为 `true` 时 `error_code` 必须为 `None`；失败时可传 `None` 或受控错误码（`EXTERNAL_SEND_FAILED`、`EXTERNAL_TIMEOUT`、`EXTERNAL_RATE_LIMITED`、`EXTERNAL_TARGET_INVALID`、`EXTERNAL_AUTH_FAILED`、`EXTERNAL_REJECTED`）。与 `CommandExecution` 一样，`NotifierDelivery` 绑定原连接（重连后提交返回 `OLD_CONNECTION`），且其 `Debug` 输出会隐藏 `target`、`title` 与 `body`。
 
 ## API 与运行边界
 
@@ -81,6 +83,7 @@ async fn main() -> Result<()> {
 | 事件 | `register_event`、`unregister_event`、`subscribe_event`、`unsubscribe_event`、`publish_event` |
 | 命令 | `register_command`、`unregister_command`、`invoke_command`、`get_command`、`await_command`、`respond_command` |
 | 通知 | `register_notification`、`unregister_notification`、`send_notification`、`get_notification` |
+| 外部通知器 | `register_notifier`、`unregister_notifier`、`respond_notifier`、`NotifierDelivery` |
 | 请求 ID | `new_request_id` |
 
 - 完整出站 JSON 最多 4096 字节 UTF-8，序列化业务 JSON 最多 2048 字节，入站最多 32768 字节。拒绝非法 JSON、重复字段、版本和响应关联错误，解析诊断不泄露原始消息。
@@ -100,6 +103,7 @@ cd D:\ciel-sdk-rust
 cargo run --example client -- enroll worker-grant.json worker-identity
 cargo run --example client -- publish worker-identity
 cargo run --example client -- serve worker-identity
+cargo run --example client -- notifier worker-identity qq-bot
 # 先在 CIEL 中授权调用方实例：
 cargo run --example client -- call caller-identity <target-instance-id>
 

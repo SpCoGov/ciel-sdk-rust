@@ -59,6 +59,14 @@ pub(crate) fn text(value: &str, max: usize, nonblank: bool) -> Result<()> {
         Ok(())
     }
 }
+pub(crate) fn no_control_text(value: &str, max: usize, nonblank: bool) -> Result<()> {
+    text(value, max, nonblank)?;
+    if value.chars().any(char::is_control) {
+        Err(input("INVALID_TEXT"))
+    } else {
+        Ok(())
+    }
+}
 pub(crate) fn payload(value: &Value) -> Result<()> {
     if serde_json::to_vec(value)
         .map_err(|_| input("INVALID_PAYLOAD"))?
@@ -216,6 +224,11 @@ mod tests {
         assert!(address("wss://localhost:0/ws/service").is_err());
         assert!(hex(&"A".repeat(64), 64).is_err());
         assert!(text(&"好".repeat(44), 128, true).is_err());
+        assert!(no_control_text("QQ\nBot", 128, true).is_err());
+        assert!(no_control_text("QQ\x7f", 128, false).is_err());
+        assert!(no_control_text("   ", 128, true).is_err());
+        no_control_text("", 128, false).unwrap();
+        no_control_text("QQ 号", 128, true).unwrap();
         assert!(payload(&Value::String("好".repeat(683))).is_err());
         assert!(server_error(&serde_json::json!({"code":"secret password"})).is_err());
         hex(&new_request_id().unwrap(), 32).unwrap();

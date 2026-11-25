@@ -148,6 +148,19 @@ async fn execution(
     .await
     .unwrap()
 }
+async fn delivery(
+    messages: &mut tokio::sync::broadcast::Receiver<Message>,
+) -> ciel_sdk::NotifierDelivery {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Message::NotifierDeliver(v) = messages.recv().await.unwrap() {
+                return *v;
+            }
+        }
+    })
+    .await
+    .unwrap()
+}
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn real_server_events_commands_notifications_heartbeat_recovery_and_interop() {
     let Some(binary) = std::env::var_os("CIEL_SERVER_BINARY") else {
@@ -354,6 +367,120 @@ async fn real_server_events_commands_notifications_heartbeat_recovery_and_intero
             .code,
         "REQUEST_ID_CONFLICT"
     );
+    // External notifier registration, conflict, admin test, delivery, error code, and no-replay.
+    assert_eq!(
+        worker
+            .register_notifier("email", "Email", "", None)
+            .await
+            .unwrap_err()
+            .code,
+        "RESERVED_NOTIFIER"
+    );
+    worker
+        .register_notifier("qq-bot", "QQ", "QQ bot notifier", Some("QQ 号"))
+        .await
+        .unwrap();
+    assert_eq!(
+        caller
+            .register_notifier("qq-bot", "QQ Conflict", "", None)
+            .await
+            .unwrap_err()
+            .code,
+        "NOTIFIER_CONFLICT"
+    );
+    let test_http = server.http.clone();
+    let test_origin = format!("https://localhost:{port}");
+    let test_cookie = server.cookie.clone();
+    let admin_test = tokio::spawn(async move {
+        let response = test_http
+            .post(format!("{test_origin}/api/notifiers/qq-bot/test"))
+            .header("Origin", test_origin)
+            .header("X-Ciel-Request", "1")
+            .header("Cookie", test_cookie)
+            .json(&json!({"target":"10001"}))
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_success());
+        response.json::<Value>().await.unwrap()
+    });
+    let test_delivery = delivery(&mut worker_messages).await;
+    assert!(test_delivery.delivery_id.starts_with("test-"));
+    assert_eq!(test_delivery.notifier_id, "qq-bot");
+    assert_eq!(test_delivery.service_id, "ciel:test");
+    assert_eq!(test_delivery.target, "10001");
+    assert!(!format!("{test_delivery:?}").contains("10001"));
+    worker
+        .respond_notifier(&test_delivery, true, None)
+        .await
+        .unwrap();
+    assert_eq!(admin_test.await.unwrap()["ok"], true);
+
+    server
+        .api(
+            "PUT",
+            "/api/notifiers/qq-bot",
+            Some(json!({"enabled":true})),
+        )
+        .await;
+    server
+        .api(
+            "PUT",
+            "/api/notification-settings/notifiers/qq-bot",
+            Some(json!({"target":"10002"})),
+        )
+        .await;
+    server
+        .api(
+            "PUT",
+            &format!(
+                "/api/notification-services/{}/preferences",
+                worker_id.instance_id
+            ),
+            Some(json!({"enabled":true,"default_channels":["inbox","qq-bot"]})),
+        )
+        .await;
+    let ext_ok = worker
+        .send_notification(
+            "backup.done",
+            "外部成功",
+            "已推送",
+            &new_request_id().unwrap(),
+        )
+        .await
+        .unwrap();
+    let d_ok = delivery(&mut worker_messages).await;
+    assert_eq!(d_ok.notifier_id, "qq-bot");
+    assert_eq!(d_ok.target, "10002");
+    assert_eq!(d_ok.service_id, "rust.worker");
+    worker.respond_notifier(&d_ok, true, None).await.unwrap();
+    let ext_ok_status = worker.get_notification(&ext_ok.id).await.unwrap();
+    assert!(
+        ext_ok_status.deliveries.iter().any(|d| {
+            d.notifier_id == "qq-bot" && d.status == ciel_sdk::DeliveryStatus::Delivered
+        })
+    );
+
+    let ext_fail = worker
+        .send_notification(
+            "backup.done",
+            "外部失败",
+            "超时测试",
+            &new_request_id().unwrap(),
+        )
+        .await
+        .unwrap();
+    let d_fail = delivery(&mut worker_messages).await;
+    worker
+        .respond_notifier(&d_fail, false, Some("EXTERNAL_TIMEOUT"))
+        .await
+        .unwrap();
+    let ext_fail_status = worker.get_notification(&ext_fail.id).await.unwrap();
+    assert!(ext_fail_status.deliveries.iter().any(|d| {
+        d.notifier_id == "qq-bot"
+            && d.status == ciel_sdk::DeliveryStatus::Failed
+            && d.error_code.as_deref() == Some("EXTERNAL_TIMEOUT")
+    }));
     let before = server
         .api(
             "GET",
@@ -387,6 +514,16 @@ async fn real_server_events_commands_notifications_heartbeat_recovery_and_intero
         .await
         .unwrap();
     let old_execute = execution(&mut worker_messages).await;
+    let ext_lost = worker
+        .send_notification(
+            "backup.done",
+            "重启不重放",
+            "断线测试",
+            &new_request_id().unwrap(),
+        )
+        .await
+        .unwrap();
+    let old_delivery = delivery(&mut worker_messages).await;
     server.stop();
     let mut states = worker.states();
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -415,6 +552,23 @@ async fn real_server_events_commands_notifications_heartbeat_recovery_and_intero
         "OLD_CONNECTION"
     );
     assert_eq!(
+        worker
+            .respond_notifier(&old_delivery, true, None)
+            .await
+            .unwrap_err()
+            .code,
+        "OLD_CONNECTION"
+    );
+    assert!(
+        worker
+            .get_notification(&ext_lost.id)
+            .await
+            .unwrap()
+            .deliveries
+            .iter()
+            .any(|d| d.notifier_id == "qq-bot" && d.status == ciel_sdk::DeliveryStatus::Failed)
+    );
+    assert_eq!(
         caller.get_command(&accepted.id).await.unwrap().status,
         CommandStatus::Unknown
     );
@@ -427,6 +581,8 @@ async fn real_server_events_commands_notifications_heartbeat_recovery_and_intero
     worker.unregister_event("demo.changed").await.unwrap();
     worker.unregister_command("demo.echo").await.unwrap();
     worker.unregister_notification("backup.done").await.unwrap();
+    worker.unregister_notifier("qq-bot").await.unwrap();
+    worker.unregister_notifier("qq-bot").await.unwrap();
     // A Java SDK identity has the same on-disk fields, and the reference client shares agent.lock.
     if let Some(peer) = std::env::var_os("CIEL_REFERENCE_CLIENT_BINARY") {
         let scenario = root.join("scenario.json");

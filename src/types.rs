@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde_json::Value;
+use std::fmt;
 
 /// 接受事件发布的确认；入队不代表订阅者已处理。
 #[derive(Debug, Clone, Deserialize)]
@@ -112,7 +113,7 @@ pub enum DeliveryStatus {
     Pending,
     /// 正在发送。
     Sending,
-    /// 渠道接受；邮件不保证已进入用户收件箱。
+    /// 渠道接受；邮件或外部通知器不保证用户已读。
     Delivered,
     /// 按设置或配置跳过。
     Skipped,
@@ -122,7 +123,7 @@ pub enum DeliveryStatus {
 /// 同渠道、状态和错误码的投递汇总。
 #[derive(Debug, Clone, Deserialize)]
 pub struct Delivery {
-    /// 渠道：inbox 或 email。
+    /// 渠道 ID（如 inbox、email 或已注册的外部通知器 ID）。
     pub notifier_id: String,
     /// 投递状态。
     pub status: DeliveryStatus,
@@ -147,6 +148,50 @@ pub struct Notification {
     /// 渠道状态分组。
     pub deliveries: Vec<Delivery>,
 }
+/// 外部通知器收到的单用户投递请求。用 [`crate::Client::respond_notifier`] 在原连接提交结果。
+///
+/// `Debug` 输出会隐藏 `target`、`title` 和 `body`，避免将用户接收目标或通知正文写入日志。
+#[derive(Clone, Deserialize)]
+pub struct NotifierDelivery {
+    /// 本次投递 ID（正式投递为 32 位小写十六进制，管理员连通性测试以 `test-` 开头）。
+    pub delivery_id: String,
+    /// 目标外部通知器 ID。
+    pub notifier_id: String,
+    /// 收件人在此渠道的目标地址（或管理员测试目标）；不包含 CIEL 内部用户标识。
+    pub target: String,
+    /// 来源服务 ID（定时任务为 `ciel:scheduler`，管理员测试为 `ciel:test`）。
+    pub service_id: String,
+    /// 通知类型 ID（定时任务为 `scheduled-task`，管理员测试为 `notifier.test`）。
+    pub notification_type: String,
+    /// 通知类型显示名称。
+    pub type_name: String,
+    /// 通知纯文本标题。
+    pub title: String,
+    /// 通知纯文本正文。
+    pub body: String,
+    /// 通知创建时间，Unix 秒。
+    pub created_at: i64,
+    /// 接受结果的截止时间，Unix 秒；SDK 不会取消你的业务投递任务。
+    pub deadline: i64,
+    #[serde(skip)]
+    pub(crate) session: String,
+}
+impl fmt::Debug for NotifierDelivery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NotifierDelivery")
+            .field("delivery_id", &self.delivery_id)
+            .field("notifier_id", &self.notifier_id)
+            .field("target", &"<redacted>")
+            .field("service_id", &self.service_id)
+            .field("notification_type", &self.notification_type)
+            .field("type_name", &self.type_name)
+            .field("title", &"<redacted>")
+            .field("body", &"<redacted>")
+            .field("created_at", &self.created_at)
+            .field("deadline", &self.deadline)
+            .finish()
+    }
+}
 /// 服务端推送流。队列满时接收者会收到 Tokio `RecvError::Lagged`。
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -156,6 +201,8 @@ pub enum Message {
     CommandExecute(CommandExecution),
     /// 原调用连接上的尽力完成推送，丢失时使用查询。
     CommandCompleted(Box<CommandCall>),
+    /// 在接收连接执行外部通知投递；业务投递不会阻塞 SDK 心跳。
+    NotifierDeliver(Box<NotifierDelivery>),
     /// 无关联请求的连接错误，或重连失败。
     Error(crate::Error),
 }

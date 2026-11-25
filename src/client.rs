@@ -1,6 +1,6 @@
 use crate::{
-    CommandCall, CommandExecution, Error, ErrorKind, Event, Identity, Message, Notification,
-    Publication, Result, SendStage, identity::Store, protocol, tls,
+    CommandCall, CommandExecution, DeliveryStatus, Error, ErrorKind, Event, Identity, Message,
+    Notification, NotifierDelivery, Publication, Result, SendStage, identity::Store, protocol, tls,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -170,7 +170,7 @@ impl Client {
     pub fn states(&self) -> watch::Receiver<State> {
         self.inner.state.clone()
     }
-    /// 订阅后续推送。每个订阅者最多保留 64 条；必须处理 Lagged，命令执行消息也可能丢失。
+    /// 订阅后续推送。每个订阅者最多保留 64 条；必须处理 Lagged，命令执行和外部通知投递消息也可能丢失。
     pub fn messages(&self) -> broadcast::Receiver<Message> {
         self.inner.messages.subscribe()
     }
@@ -466,6 +466,95 @@ impl Client {
         }
         Ok(notification)
     }
+    /// 注册或更新本实例提供的外部通知渠道。
+    ///
+    /// `notifier_id` 全局唯一并绑定到当前实例（单个实例最多 32 个），`inbox` 与 `email` 为保留 ID。
+    /// `name` 需为非空白且不含控制字符的 UTF-8 文本（最多 128 字节）；`description` 最多 1024 字节；
+    /// 可选 `target_label` 不含控制字符且最多 128 字节（省略或空白时服务端使用默认标签）。
+    /// 新注册渠道默认停用，需由管理员启用后才会向其派发真实用户通知；重复注册仅更新展示元数据，
+    /// 不重置管理员启停状态，也不清除用户既有目标或渠道偏好。
+    pub async fn register_notifier(
+        &self,
+        notifier_id: &str,
+        name: &str,
+        description: &str,
+        target_label: Option<&str>,
+    ) -> Result<()> {
+        protocol::no_control_text(name, 128, true)?;
+        protocol::text(description, 1024, false)?;
+        let mut extra = json!({"name":name,"description":description});
+        if let Some(label) = target_label {
+            protocol::no_control_text(label, 128, false)?;
+            extra["target_label"] = json!(label);
+        }
+        self.relation(
+            "notifier_register",
+            "notifier_registered",
+            "notifier_id",
+            notifier_id,
+            extra,
+        )
+        .await
+    }
+    /// 注销本实例拥有的外部通知渠道；注销本实例不存在的渠道幂等成功。
+    /// 保留历史投递快照与用户既有偏好，不允许注销保留 ID 或其他实例拥有的渠道。
+    pub async fn unregister_notifier(&self, notifier_id: &str) -> Result<()> {
+        self.relation(
+            "notifier_unregister",
+            "notifier_unregistered",
+            "notifier_id",
+            notifier_id,
+            Value::Null,
+        )
+        .await
+    }
+    /// 在收到投递请求的原连接上回传外部通知投递结果。
+    ///
+    /// 连接已更换时返回 `OLD_CONNECTION`，绝不跨重连发送。必须传入 `messages()` 收到的
+    /// [`NotifierDelivery`]。`success` 为 `true` 时 `error_code` 必须为 `None`；失败时可传
+    /// `None` 或受控错误码（如 `EXTERNAL_SEND_FAILED`、`EXTERNAL_TIMEOUT`、
+    /// `EXTERNAL_RATE_LIMITED`、`EXTERNAL_TARGET_INVALID`、`EXTERNAL_AUTH_FAILED`、
+    /// `EXTERNAL_REJECTED`，最多 64 字节且不含控制字符；服务端会将未识别错误码归一为
+    /// `EXTERNAL_SEND_FAILED`）。
+    pub async fn respond_notifier(
+        &self,
+        delivery: &NotifierDelivery,
+        success: bool,
+        error_code: Option<&str>,
+    ) -> Result<()> {
+        protocol::id(&delivery.delivery_id)?;
+        if success && error_code.is_some() {
+            return Err(protocol::input("INVALID_INPUT"));
+        }
+        let mut payload = json!({
+            "type": "notifier_result",
+            "delivery_id": delivery.delivery_id,
+            "success": success,
+            "request_id": protocol::new_request_id()?
+        });
+        if let Some(code) = error_code {
+            protocol::no_control_text(code, 64, true)?;
+            payload["error_code"] = json!(code);
+        }
+        let reply = self
+            .request(
+                payload,
+                "notifier_result_ack",
+                Some(("delivery_id", delivery.delivery_id.clone())),
+                Some(delivery.session.clone()),
+            )
+            .await?;
+        let status: DeliveryStatus = protocol::decode(reply["status"].clone())?;
+        let expected = if success {
+            DeliveryStatus::Delivered
+        } else {
+            DeliveryStatus::Failed
+        };
+        if status != expected {
+            return Err(protocol::bad());
+        }
+        Ok(())
+    }
 }
 fn call(value: Value) -> Result<CommandCall> {
     let call: CommandCall = protocol::decode(value)?;
@@ -591,8 +680,19 @@ async fn session(
                                     let _ = messages.send(Message::CommandExecute(execution));
                                 }
                                 "command_completed" => { let _ = messages.send(Message::CommandCompleted(Box::new(call(reply["call"].clone())?))); }
+                                "notifier_deliver" => {
+                                    let mut delivery: NotifierDelivery = protocol::decode(reply)?;
+                                    protocol::id(&delivery.delivery_id).map_err(|_| protocol::bad())?;
+                                    protocol::id(&delivery.notifier_id).map_err(|_| protocol::bad())?;
+                                    protocol::id(&delivery.notification_type).map_err(|_| protocol::bad())?;
+                                    if delivery.target.trim().is_empty() || delivery.service_id.trim().is_empty() {
+                                        return Err(protocol::bad());
+                                    }
+                                    delivery.session = session_id.clone();
+                                    let _ = messages.send(Message::NotifierDeliver(Box::new(delivery)));
+                                }
                                 _ => {
-                                    if !matches!(protocol::string(&reply,"type")?,"error"|"event_registered"|"event_unregistered"|"event_subscribed"|"event_unsubscribed"|"event_published"|"command_registered"|"command_unregistered"|"command_accepted"|"command_status"|"command_result_ack"|"notification_registered"|"notification_unregistered"|"notification_result"|"notification_status") { return Err(protocol::bad()); }
+                                    if !matches!(protocol::string(&reply,"type")?,"error"|"event_registered"|"event_unregistered"|"event_subscribed"|"event_unsubscribed"|"event_published"|"command_registered"|"command_unregistered"|"command_accepted"|"command_status"|"command_result_ack"|"notification_registered"|"notification_unregistered"|"notification_result"|"notification_status"|"notifier_registered"|"notifier_unregistered"|"notifier_result_ack") { return Err(protocol::bad()); }
                                     if let Some(id) = reply.get("request_id") {
                                         let id = id.as_str().ok_or_else(protocol::bad)?;
                                         protocol::id(id).map_err(|_| protocol::bad())?;
@@ -889,6 +989,267 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(1100)).await;
         assert!(heartbeats.load(Ordering::SeqCst) >= 2);
         assert_eq!(client.state(), State::Ready);
+        client.close().await;
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn registers_delivers_redacts_and_binds_external_notifiers() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            while let Some(Ok(Wire::Text(text))) = socket.next().await {
+                let request = protocol::response(text.as_bytes()).unwrap();
+                match request["type"].as_str().unwrap() {
+                    "heartbeat" => {
+                        socket
+                            .send(Wire::Text(
+                                json!({"v":1,"type":"heartbeat_ack","server_time":1})
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await
+                            .unwrap();
+                    }
+                    "notifier_register" => {
+                        let notifier_id = request["notifier_id"].as_str().unwrap().to_owned();
+                        socket
+                            .send(Wire::Text(
+                                json!({
+                                    "v": 1,
+                                    "type": "notifier_registered",
+                                    "notifier_id": notifier_id,
+                                    "request_id": request["request_id"]
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await
+                            .unwrap();
+                        if notifier_id == "qq-bot" {
+                            assert_eq!(request["target_label"], "QQ 号");
+                            socket
+                                .send(Wire::Text(
+                                    json!({
+                                        "v": 1,
+                                        "type": "notifier_deliver",
+                                        "delivery_id": format!("test-{}", "a".repeat(32)),
+                                        "notifier_id": "qq-bot",
+                                        "target": "secret-qq-10001",
+                                        "service_id": "ciel:test",
+                                        "notification_type": "notifier.test",
+                                        "type_name": "Notifier Test",
+                                        "title": "secret-title",
+                                        "body": "secret-body",
+                                        "created_at": 100,
+                                        "deadline": 130
+                                    })
+                                    .to_string()
+                                    .into(),
+                                ))
+                                .await
+                                .unwrap();
+                        } else if notifier_id == "discord" {
+                            assert!(request.get("target_label").is_none());
+                            socket
+                                .send(Wire::Text(
+                                    json!({
+                                        "v": 1,
+                                        "type": "notifier_deliver",
+                                        "delivery_id": "d".repeat(32),
+                                        "notifier_id": "discord",
+                                        "target": "1234567890",
+                                        "service_id": "ciel:scheduler",
+                                        "notification_type": "scheduled-task",
+                                        "type_name": "Scheduled Task",
+                                        "title": "Nightly",
+                                        "body": "Failed",
+                                        "created_at": 100,
+                                        "deadline": 130
+                                    })
+                                    .to_string()
+                                    .into(),
+                                ))
+                                .await
+                                .unwrap();
+                        }
+                    }
+                    "notifier_result" => {
+                        let success = request["success"].as_bool().unwrap();
+                        if success {
+                            assert!(request.get("error_code").is_none());
+                        } else {
+                            assert_eq!(request["error_code"], "EXTERNAL_TIMEOUT");
+                        }
+                        socket
+                            .send(Wire::Text(
+                                json!({
+                                    "v": 1,
+                                    "type": "notifier_result_ack",
+                                    "delivery_id": request["delivery_id"],
+                                    "status": if success { "DELIVERED" } else { "FAILED" },
+                                    "request_id": request["request_id"]
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await
+                            .unwrap();
+                    }
+                    "notifier_unregister" => {
+                        socket
+                            .send(Wire::Text(
+                                json!({
+                                    "v": 1,
+                                    "type": "notifier_unregistered",
+                                    "notifier_id": request["notifier_id"],
+                                    "request_id": request["request_id"]
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await
+                            .unwrap();
+                    }
+                    other => panic!("Unexpected request type: {other}"),
+                }
+            }
+        });
+        let tcp = tokio::net::TcpStream::connect(address).await.unwrap();
+        let (socket, _) = tokio_tungstenite::client_async(
+            format!("ws://{address}/ws/service"),
+            tokio_tungstenite::MaybeTlsStream::Plain(tcp),
+        )
+        .await
+        .unwrap();
+        let options = Options {
+            request_timeout: Duration::from_secs(2),
+            heartbeat_ack_timeout: Duration::from_secs(2),
+            ..Options::default()
+        };
+        let (requests, mut rx) = mpsc::channel(64);
+        let (messages, _) = broadcast::channel(64);
+        let (state_tx, state) = watch::channel(State::Ready);
+        let (cancel, mut cancel_rx) = watch::channel(false);
+        let events = messages.clone();
+        let configuration = options.clone();
+        let task = tokio::spawn(async move {
+            let error = session(
+                socket,
+                json!({"session_id":"b".repeat(32),"heartbeat_interval_seconds":30}),
+                &configuration,
+                &mut rx,
+                &events,
+                &mut cancel_rx,
+            )
+            .await;
+            assert_eq!(error.code, "CLIENT_CLOSED");
+            state_tx.send_replace(State::Closed);
+        });
+        let client = Client {
+            inner: Arc::new(Inner {
+                identity: Identity {
+                    server: format!("wss://{address}/ws/service"),
+                    server_spki_sha256: "a".repeat(64),
+                    service_id: "mock.notifier".into(),
+                    instance_id: "b".repeat(32),
+                    credential: "c".repeat(64),
+                },
+                options,
+                requests,
+                capacity: Arc::new(Semaphore::new(64)),
+                messages,
+                state,
+                cancel,
+                task: Mutex::new(Some(task)),
+            }),
+        };
+        let mut stream = client.messages();
+
+        // Local input validation rejects control chars and invalid combinations before sending.
+        assert_eq!(
+            client
+                .register_notifier("qq-bot", "QQ\nBot", "desc", None)
+                .await
+                .unwrap_err()
+                .code,
+            "INVALID_TEXT"
+        );
+        assert_eq!(
+            client
+                .register_notifier("qq-bot", "QQ", "desc", Some("Label\r\n"))
+                .await
+                .unwrap_err()
+                .code,
+            "INVALID_TEXT"
+        );
+
+        client
+            .register_notifier("qq-bot", "QQ", "QQ Bot", Some("QQ 号"))
+            .await
+            .unwrap();
+        let test_delivery = match stream.recv().await.unwrap() {
+            Message::NotifierDeliver(d) => d,
+            other => panic!("Expected NotifierDeliver, got {other:?}"),
+        };
+        assert_eq!(test_delivery.notifier_id, "qq-bot");
+        assert_eq!(test_delivery.service_id, "ciel:test");
+        assert_eq!(test_delivery.target, "secret-qq-10001");
+        let debug = format!("{test_delivery:?}");
+        assert!(!debug.contains("secret-qq-10001"));
+        assert!(!debug.contains("secret-title"));
+        assert!(!debug.contains("secret-body"));
+
+        assert_eq!(
+            client
+                .respond_notifier(&test_delivery, true, Some("EXTERNAL_TIMEOUT"))
+                .await
+                .unwrap_err()
+                .code,
+            "INVALID_INPUT"
+        );
+        assert_eq!(
+            client
+                .respond_notifier(&test_delivery, false, Some("BAD\nCODE"))
+                .await
+                .unwrap_err()
+                .code,
+            "INVALID_TEXT"
+        );
+        client
+            .respond_notifier(&test_delivery, true, None)
+            .await
+            .unwrap();
+
+        let mut stale = (*test_delivery).clone();
+        stale.session = "0".repeat(32);
+        assert_eq!(
+            client
+                .respond_notifier(&stale, true, None)
+                .await
+                .unwrap_err()
+                .code,
+            "OLD_CONNECTION"
+        );
+
+        client
+            .register_notifier("discord", "Discord", "", None)
+            .await
+            .unwrap();
+        let scheduled_delivery = match stream.recv().await.unwrap() {
+            Message::NotifierDeliver(d) => d,
+            other => panic!("Expected NotifierDeliver, got {other:?}"),
+        };
+        assert_eq!(scheduled_delivery.service_id, "ciel:scheduler");
+        client
+            .respond_notifier(&scheduled_delivery, false, Some("EXTERNAL_TIMEOUT"))
+            .await
+            .unwrap();
+
+        client.unregister_notifier("qq-bot").await.unwrap();
+        client.unregister_notifier("discord").await.unwrap();
         client.close().await;
         server.await.unwrap();
     }

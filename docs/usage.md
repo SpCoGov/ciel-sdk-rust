@@ -8,7 +8,7 @@ Add the SDK and application dependencies:
 
 ```toml
 [dependencies]
-ciel-sdk = "0.1.0"
+ciel-sdk = "0.2.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde_json = "1"
 ```
@@ -68,7 +68,9 @@ Command providers register commands and consume `Message::CommandExecute`. Pass 
 
 Callers need administrator permission for each target instance/command; registration grants no calling permission. Use `invoke_command(target_instance_id, command_id, input, timeout_seconds, request_id)`, then `get_command` or `await_command`. An accepted record may already be terminal. `Pending`/`Dispatched` are unfinished; `Succeeded`/`Failed`/`Unknown` are terminal. **Unknown means side effects are uncertain.** Completion pushes are best effort on the original caller connection; queries work after reconnection. Client wait timeouts do not cancel server execution. Persist the request ID and exact target/command/input/timeout before a real call; an intentional retry must preserve all of them. Conflict and retention/expiry errors are returned to the caller.
 
-Notifications use `register_notification`, `send_notification`, and `get_notification`. Users choose receiving channels in CIEL; registration alone does not subscribe them. Identical request ID and type/title/body deduplicate sends. Changed parameters return `REQUEST_ID_CONFLICT`. `Notification.deliveries` groups channel statuses. `Pending`/`Sending` need further queries: there is no notification-completed push. Email `Delivered` means SMTP accepted it, not that the user received or read it.
+Notifications use `register_notification`, `send_notification`, and `get_notification`. Users choose receiving channels in CIEL; registration alone does not subscribe them. Identical request ID and type/title/body deduplicate sends. Changed parameters return `REQUEST_ID_CONFLICT`. `Notification.deliveries` groups channel statuses. `Pending`/`Sending` need further queries: there is no notification-completed push. Email or external channel `Delivered` means the provider accepted it, not that the user received or read it.
+
+External notifier providers register one or more delivery channels per instance (up to 32; `inbox` and `email` are reserved) using `register_notifier(notifier_id, name, description, target_label)` and remove them with `unregister_notifier(notifier_id)`. Newly registered channels start disabled (`enabled = false`) until an administrator enables them; re-registering updates metadata without resetting enablement or user targets/preferences. Consume `Message::NotifierDeliver(delivery)` and report outcomes on the same connection via `respond_notifier(&delivery, success, error_code)`. Passing `error_code` when `success` is `true` is rejected locally; on failure, pass `None` or a controlled machine code (e.g. `EXTERNAL_SEND_FAILED`, `EXTERNAL_TIMEOUT`, `EXTERNAL_RATE_LIMITED`, `EXTERNAL_TARGET_INVALID`, `EXTERNAL_AUTH_FAILED`, `EXTERNAL_REJECTED`). Like `CommandExecution`, `NotifierDelivery` retains its original session (`OLD_CONNECTION` after reconnect) and its `Debug` format redacts `target`, `title`, and `body`.
 
 ## Public API and limits
 
@@ -81,6 +83,7 @@ All public APIs have Rustdoc: `cargo doc --no-deps --open`.
 | Events | `register_event`, `unregister_event`, `subscribe_event`, `unsubscribe_event`, `publish_event` |
 | Commands | `register_command`, `unregister_command`, `invoke_command`, `get_command`, `await_command`, `respond_command` |
 | Notifications | `register_notification`, `unregister_notification`, `send_notification`, `get_notification` |
+| External Notifiers | `register_notifier`, `unregister_notifier`, `respond_notifier`, `NotifierDelivery` |
 | IDs | `new_request_id` |
 
 - Outgoing JSON: 4096 UTF-8 bytes. Serialized business JSON: 2048 bytes. Receive limit: 32768 bytes. Invalid JSON, duplicate keys, invalid versions and response correlations are rejected; parser diagnostics are redacted.
@@ -100,6 +103,7 @@ cd D:\ciel-sdk-rust
 cargo run --example client -- enroll worker-grant.json worker-identity
 cargo run --example client -- publish worker-identity
 cargo run --example client -- serve worker-identity
+cargo run --example client -- notifier worker-identity qq-bot
 # Authorize the caller instance in CIEL first:
 cargo run --example client -- call caller-identity <target-instance-id>
 
