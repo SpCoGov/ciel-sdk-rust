@@ -48,6 +48,10 @@ async fn main() -> Result<()> {
 
 以后启动时直接使用已有身份目录连接，不再重复注册。请私密保存授权和身份文件。事件、命令、通知及恢复规则见[使用指南](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/docs/usage.zh-CN.md)。
 
+## 托管服务
+
+管理员上传服务包后，CIEL 会预置实例身份。服务可调用 `Client::connect_managed().await?` 或 `Client::connect_managed_with_options(options).await?`，使用 `CIEL_IDENTITY_DIR` 中的身份完成鉴权。通过 `ciel_sdk::managed_config::<T>()?` 读取配置，类型 `T` 需实现 Serde 的 `DeserializeOwned`。配置可能包含密钥。需要在升级后保留的文件可写入 `ciel_sdk::managed_work_dir()?` 返回的工作目录。
+
 ## ⚙️ 构建
 
 ```sh

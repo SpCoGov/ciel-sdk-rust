@@ -53,6 +53,68 @@ struct Grant {
 fn storage(code: &str) -> Error {
     Error::new(ErrorKind::Storage, code)
 }
+pub(crate) fn managed_path(variable: &str, missing: &str) -> Result<PathBuf> {
+    std::env::var_os(variable)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| storage(missing))
+}
+
+/// 从 `CIEL_CONFIG_PATH` 读取最多 65536 字节的私有 JSON 配置并反序列化为 `T`。
+pub fn managed_config<T: serde::de::DeserializeOwned>() -> Result<T> {
+    let path = managed_path("CIEL_CONFIG_PATH", "MANAGED_CONFIG_PATH_MISSING")?;
+    let invalid = || storage("INVALID_CONFIG_FILE");
+    safe_path(&path).map_err(|_| invalid())?;
+    let before = fs::symlink_metadata(&path).map_err(|_| invalid())?;
+    if !before.is_file() {
+        return Err(invalid());
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x00200000); // FILE_FLAG_OPEN_REPARSE_POINT
+    }
+    let file = options.open(path).map_err(|_| invalid())?;
+    let meta = file.metadata().map_err(|_| invalid())?;
+    if !meta.is_file() {
+        return Err(invalid());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if (before.dev(), before.ino()) != (meta.dev(), meta.ino()) {
+            return Err(invalid());
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if meta.file_attributes() & 0x400 != 0 {
+            return Err(invalid());
+        }
+    }
+    let mut bytes = Vec::new();
+    file.take(65537)
+        .read_to_end(&mut bytes)
+        .map_err(|_| invalid())?;
+    if bytes.len() > 65536 {
+        return Err(storage("CONFIG_FILE_TOO_LARGE"));
+    }
+    serde_json::from_slice(&bytes).map_err(|_| invalid())
+}
+
+/// 返回 `CIEL_WORK_DIR` 指定的现有工作目录，拒绝符号链接和 Windows 重解析点。
+pub fn managed_work_dir() -> Result<PathBuf> {
+    let path = managed_path("CIEL_WORK_DIR", "MANAGED_WORK_DIR_MISSING")?;
+    safe_path(&path)?;
+    if !path.is_dir() {
+        return Err(storage("INVALID_WORK_DIR"));
+    }
+    std::path::absolute(path).map_err(|_| storage("INVALID_WORK_DIR"))
+}
+
 fn safe_path(path: &Path) -> Result<()> {
     for parent in path.ancestors() {
         match fs::symlink_metadata(parent) {

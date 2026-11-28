@@ -48,6 +48,10 @@ async fn main() -> Result<()> {
 
 On subsequent starts, connect using the existing directory. Keep grants and identity files private. For events, commands, notifications, and recovery rules, see the [usage guide](https://github.com/SpCoGov/ciel-sdk-rust/blob/main/docs/usage.md).
 
+## Managed services
+
+CIEL provisions an identity when an administrator uploads a service package. In the worker, call `Client::connect_managed().await?` or `Client::connect_managed_with_options(options).await?` to authenticate with the identity in `CIEL_IDENTITY_DIR`. Read your configuration with `ciel_sdk::managed_config::<T>()?` where `T` implements Serde's `DeserializeOwned`. Configuration may contain secrets. Use `ciel_sdk::managed_work_dir()?` for files that should survive package upgrades.
+
 ## ⚙️ Build
 
 ```sh

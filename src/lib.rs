@@ -35,7 +35,7 @@ mod types;
 
 pub use client::{Client, Options, State};
 pub use error::{Error, ErrorKind, Result, SendStage};
-pub use identity::{Identity, enroll};
+pub use identity::{Identity, enroll, managed_config, managed_work_dir};
 pub use protocol::new_request_id;
 
 // Keep both README examples executable through the native Rustdoc checks.

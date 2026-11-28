@@ -111,6 +111,18 @@ pub struct Client {
     inner: Arc<Inner>,
 }
 impl Client {
+    /// 使用 CIEL 在 `CIEL_IDENTITY_DIR` 中预置的托管身份连接并等待 READY。
+    pub async fn connect_managed() -> Result<Self> {
+        Self::connect_managed_with_options(Options::default()).await
+    }
+
+    /// 使用指定时限连接托管实例。缺少身份目录环境变量时返回存储错误。
+    pub async fn connect_managed_with_options(options: Options) -> Result<Self> {
+        let dir =
+            crate::identity::managed_path("CIEL_IDENTITY_DIR", "MANAGED_IDENTITY_DIR_MISSING")?;
+        Self::connect_with_options(dir, options).await
+    }
+
     /// 从已注册的身份目录连接并等待 READY；初次连接失败直接返回错误。
     pub async fn connect(directory: impl AsRef<Path>) -> Result<Self> {
         Self::connect_with_options(directory, Options::default()).await
