@@ -26,7 +26,7 @@ Add the SDK and Tokio to your application's `Cargo.toml`:
 
 ```toml
 [dependencies]
-ciel-sdk = "0.2.0"
+ciel-sdk = "0.3.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
